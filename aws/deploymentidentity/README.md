@@ -5,8 +5,8 @@ This AWS-specific Pulumi component creates separate preview and apply IAM roles 
 ## Example
 
 ```go
-identity, err := deploymentidentity.NewGitHubActionsDeploymentIdentity(ctx, "ferro-release", deploymentidentity.Args{
-    RoleNamePrefix:    "ferro-release",
+identity, err := deploymentidentity.NewGitHubActionsDeploymentIdentity(ctx, "example-release", deploymentidentity.Args{
+    RoleNamePrefix:    "example-release",
     ProviderARN:       "arn:aws:iam::123456789012:oidc-provider/token.actions.githubusercontent.com",
     Audience:          deploymentidentity.GitHubOIDCAudience,
     RepositoryOwner:   "example-org",

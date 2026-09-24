@@ -18,7 +18,7 @@ const (
 
 func validArgs() Args {
 	return Args{
-		RoleNamePrefix: "ferro-deploy", ProviderARN: testProviderARN, Audience: GitHubOIDCAudience,
+		RoleNamePrefix: "example-deploy", ProviderARN: testProviderARN, Audience: GitHubOIDCAudience,
 		RepositoryOwner: "example-org", RepositoryName: "example-repo", Ref: "refs/heads/main", ApplyEnvironment: "production",
 		PreviewPolicyJSON: previewPolicy, ApplyPolicyJSON: applyPolicy,
 	}
@@ -57,7 +57,7 @@ func TestBuildSubjectRequiresExactRepositoryExecutionContext(t *testing.T) {
 			if tc.edit != nil {
 				tc.edit(&args)
 			}
-			got, err := validateArgs("ferro-deploy", args)
+			got, err := validateArgs("example-deploy", args)
 			if tc.bad {
 				if err == nil {
 					t.Fatalf("expected validation failure, got subject %q", got)
@@ -200,7 +200,7 @@ func TestComponentRegistersSeparateScopedPreviewAndApplyRoles(t *testing.T) {
 			}
 		}
 	}
-	if roles != 2 || rolePolicies != 2 || !roleNames["ferro-deploy-preview"] || !roleNames["ferro-deploy-apply"] {
+	if roles != 2 || rolePolicies != 2 || !roleNames["example-deploy-preview"] || !roleNames["example-deploy-apply"] {
 		t.Fatalf("resources: roles=%d policies=%d names=%v", roles, rolePolicies, roleNames)
 	}
 }
