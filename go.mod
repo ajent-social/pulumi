@@ -1,4 +1,4 @@
-module github.com/ajent-social/pulumi-aws-deployment-identity
+module github.com/ajent-social/pulumi
 
 go 1.25.11
 
