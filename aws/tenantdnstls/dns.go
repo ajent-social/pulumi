@@ -39,9 +39,10 @@ type Bundle struct {
 
 // New creates a DNS-validated ACM cert for *.baseDomain.
 //
-// Emits a Route53 validation CNAME for each unique ACM DomainValidationOption
-// name (apex + wildcard often share one CNAME; when they diverge, both are
-// created) and waits on CertificateValidation with every option's FQDN.
+// Apex + wildcard under the same parent share one ACM DNS validation CNAME.
+// This component creates that record at registration time, passes every
+// DomainValidationOption name into CertificateValidation, and DependsOn the
+// Route53 record so validation cannot race ahead of DNS.
 func New(ctx *pulumi.Context, name string, args Args, opts ...pulumi.ResourceOption) (*Bundle, error) {
 	if ctx == nil {
 		return nil, errors.New("Pulumi context is required")
@@ -68,35 +69,31 @@ func New(ctx *pulumi.Context, name string, args Args, opts ...pulumi.ResourceOpt
 		return nil, fmt.Errorf("acm certificate: %w", err)
 	}
 
+	dvo := cert.DomainValidationOptions.Index(pulumi.Int(0))
+	validationRecord, err := route53.NewRecord(ctx, name+"-acm-validation", &route53.RecordArgs{
+		ZoneId: pulumi.String(args.HostedZoneID),
+		Name:   dvo.ResourceRecordName().Elem(),
+		Type:   dvo.ResourceRecordType().Elem(),
+		Records: pulumi.StringArray{
+			dvo.ResourceRecordValue().Elem(),
+		},
+		Ttl:            pulumi.Int(60),
+		AllowOverwrite: pulumi.Bool(true),
+	}, pulumi.Parent(component))
+	if err != nil {
+		return nil, fmt.Errorf("acm validation DNS record: %w", err)
+	}
+
+	// Include every option's validation name (apex + wildcard). For this SAN
+	// shape AWS returns the same CNAME; listing both keeps CertificateValidation
+	// complete if options are reported separately.
 	validationFQDNs := cert.DomainValidationOptions.ApplyT(func(opts []acm.CertificateDomainValidationOption) ([]string, error) {
-		seenName := map[string]struct{}{}
 		var fqdns []string
-		n := 0
 		for _, opt := range opts {
-			if opt.ResourceRecordName == nil || opt.ResourceRecordType == nil || opt.ResourceRecordValue == nil {
+			if opt.ResourceRecordName == nil {
 				continue
 			}
-			recName := *opt.ResourceRecordName
-			if _, ok := seenName[recName]; !ok {
-				seenName[recName] = struct{}{}
-				_, err := route53.NewRecord(ctx, fmt.Sprintf("%s-acm-validation-%d", name, n), &route53.RecordArgs{
-					ZoneId: pulumi.String(args.HostedZoneID),
-					Name:   pulumi.String(recName),
-					Type:   pulumi.String(*opt.ResourceRecordType),
-					Records: pulumi.StringArray{
-						pulumi.String(*opt.ResourceRecordValue),
-					},
-					Ttl:            pulumi.Int(60),
-					AllowOverwrite: pulumi.Bool(true),
-				}, pulumi.Parent(component))
-				if err != nil {
-					return nil, fmt.Errorf("acm validation DNS record %d: %w", n, err)
-				}
-				n++
-			}
-			// Pass every option's validation name so CertificateValidation covers
-			// both apex and wildcard even when they share one Route53 CNAME.
-			fqdns = append(fqdns, recName)
+			fqdns = append(fqdns, *opt.ResourceRecordName)
 		}
 		if len(fqdns) == 0 {
 			return nil, errors.New("no ACM domain validation options")
@@ -107,7 +104,7 @@ func New(ctx *pulumi.Context, name string, args Args, opts ...pulumi.ResourceOpt
 	validation, err := acm.NewCertificateValidation(ctx, name+"-cert-validation", &acm.CertificateValidationArgs{
 		CertificateArn:        cert.Arn,
 		ValidationRecordFqdns: validationFQDNs,
-	}, pulumi.Parent(component))
+	}, pulumi.Parent(component), pulumi.DependsOn([]pulumi.Resource{validationRecord}))
 	if err != nil {
 		return nil, fmt.Errorf("certificate validation resource: %w", err)
 	}
