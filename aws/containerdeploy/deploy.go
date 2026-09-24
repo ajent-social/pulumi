@@ -7,12 +7,13 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/pulumi/pulumi-aws/sdk/v6/go/aws/cloudwatch"
 	"github.com/pulumi/pulumi-aws/sdk/v6/go/aws/ecs"
 	"github.com/pulumi/pulumi/sdk/v3/go/pulumi"
 )
 
 var (
-	digestRE = regexp.MustCompile(`^[0-9]{12}\.dkr\.ecr\.[a-z0-9-]+\.amazonaws\.com/[a-z0-9._/-]+@sha256:[a-f0-9]{64}$`)
+	digestRE = regexp.MustCompile(`^([0-9]{12})\.dkr\.ecr\.([a-z0-9-]+)\.amazonaws\.com/[a-z0-9._/-]+@sha256:[a-f0-9]{64}$`)
 	nameRE   = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
 )
 
@@ -30,15 +31,16 @@ type Args struct {
 	TaskRoleARN      string
 	AssignPublicIP   bool // default false; must be explicit true to enable
 	DesiredCount     int
-	Region           string // AWS region for awslogs; required
+	Region           string // AWS region for awslogs and ECR; required
 }
 
 // Service is a Fargate deployment component.
 type Service struct {
 	pulumi.ResourceState
 
-	ServiceARN         pulumi.StringOutput `pulumi:"serviceArn"`
-	TaskDefinitionARN  pulumi.StringOutput `pulumi:"taskDefinitionArn"`
+	ServiceARN        pulumi.StringOutput `pulumi:"serviceArn"`
+	TaskDefinitionARN pulumi.StringOutput `pulumi:"taskDefinitionArn"`
+	LogGroupName      pulumi.StringOutput `pulumi:"logGroupName"`
 }
 
 // New registers an ECS task definition and service.
@@ -58,6 +60,18 @@ func New(ctx *pulumi.Context, name string, args Args, opts ...pulumi.ResourceOpt
 		count = 1
 	}
 
+	logGroupName := fmt.Sprintf("/ajent/containerdeploy/%s", args.Name)
+	logGroup, err := cloudwatch.NewLogGroup(ctx, name+"-logs", &cloudwatch.LogGroupArgs{
+		Name:            pulumi.String(logGroupName),
+		RetentionInDays: pulumi.Int(30),
+		Tags: pulumi.StringMap{
+			"ajent-capability": pulumi.String("delivery.container-deploy"),
+		},
+	}, pulumi.Parent(component))
+	if err != nil {
+		return nil, fmt.Errorf("log group: %w", err)
+	}
+
 	containerDefs := fmt.Sprintf(`[
   {
     "name": %q,
@@ -67,13 +81,13 @@ func New(ctx *pulumi.Context, name string, args Args, opts ...pulumi.ResourceOpt
     "logConfiguration": {
       "logDriver": "awslogs",
       "options": {
-        "awslogs-group": "/ajent/containerdeploy/%s",
+        "awslogs-group": %q,
         "awslogs-region": %q,
         "awslogs-stream-prefix": "ecs"
       }
     }
   }
-]`, args.Name, args.Image, args.ContainerPort, args.Name, args.Region)
+]`, args.Name, args.Image, args.ContainerPort, logGroupName, args.Region)
 
 	td, err := ecs.NewTaskDefinition(ctx, name+"-td", &ecs.TaskDefinitionArgs{
 		Family:                  pulumi.String(args.Name),
@@ -87,7 +101,7 @@ func New(ctx *pulumi.Context, name string, args Args, opts ...pulumi.ResourceOpt
 		Tags: pulumi.StringMap{
 			"ajent-capability": pulumi.String("delivery.container-deploy"),
 		},
-	}, pulumi.Parent(component))
+	}, pulumi.Parent(component), pulumi.DependsOn([]pulumi.Resource{logGroup}))
 	if err != nil {
 		return nil, fmt.Errorf("task definition: %w", err)
 	}
@@ -114,9 +128,11 @@ func New(ctx *pulumi.Context, name string, args Args, opts ...pulumi.ResourceOpt
 	// ECS Service ID is the service ARN in the AWS provider.
 	component.ServiceARN = svc.ID().ToStringOutput()
 	component.TaskDefinitionARN = td.Arn
+	component.LogGroupName = logGroup.Name
 	if err := ctx.RegisterResourceOutputs(component, pulumi.Map{
 		"serviceArn":        component.ServiceARN,
 		"taskDefinitionArn": component.TaskDefinitionARN,
+		"logGroupName":      component.LogGroupName,
 	}); err != nil {
 		return nil, err
 	}
@@ -133,7 +149,8 @@ func validateArgs(a Args) error {
 	if a.ClusterARN == "" || a.ExecutionRoleARN == "" || a.TaskRoleARN == "" {
 		return errors.New("ClusterARN, ExecutionRoleARN and TaskRoleARN are required")
 	}
-	if !digestRE.MatchString(a.Image) {
+	m := digestRE.FindStringSubmatch(a.Image)
+	if m == nil {
 		return errors.New("Image must be an ECR repository@sha256:digest (mutable tags rejected)")
 	}
 	if strings.Contains(a.Image, ":latest") {
@@ -147,6 +164,9 @@ func validateArgs(a Args) error {
 	}
 	if strings.TrimSpace(a.Region) == "" {
 		return errors.New("Region required for awslogs")
+	}
+	if m[2] != a.Region {
+		return fmt.Errorf("Image ECR region %q must match Region %q", m[2], a.Region)
 	}
 	return nil
 }
