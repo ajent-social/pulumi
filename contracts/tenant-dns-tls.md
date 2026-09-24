@@ -13,3 +13,7 @@ certificate SANs.
 ## Non-goals
 
 Global CDN, multi-region failover, or registering the apex domain.
+
+Apex + `*.baseDomain` share one ACM DNS validation CNAME under current AWS
+behavior; this component creates that record at registration time. Distinct
+validation CNAMEs for unrelated SANs are out of scope for this candidate.
