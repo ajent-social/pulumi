@@ -27,7 +27,8 @@ var (
 )
 
 // Args describes one GitHub repository and its single allowed execution
-// context. Set exactly one of Ref or Environment. OwnerID and RepositoryID
+// context per role. Set exactly one of Ref or Environment for preview and
+// exactly one of ApplyRef or ApplyEnvironment for apply. OwnerID and RepositoryID
 // must be supplied together to use GitHub's immutable subject format.
 type Args struct {
 	RoleNamePrefix    string
@@ -39,6 +40,8 @@ type Args struct {
 	RepositoryID      string
 	Ref               string
 	Environment       string
+	ApplyRef          string
+	ApplyEnvironment  string
 	PreviewPolicyJSON string
 	ApplyPolicyJSON   string
 }
@@ -52,6 +55,7 @@ type GitHubActionsDeploymentIdentity struct {
 	PreviewRoleARN  pulumi.StringOutput `pulumi:"previewRoleArn"`
 	ApplyRoleARN    pulumi.StringOutput `pulumi:"applyRoleArn"`
 	Subject         pulumi.StringOutput `pulumi:"subject"`
+	ApplySubject    pulumi.StringOutput `pulumi:"applySubject"`
 	TrustPolicyJSON pulumi.StringOutput `pulumi:"trustPolicyJSON"`
 }
 
@@ -69,6 +73,19 @@ func NewGitHubActionsDeploymentIdentity(
 		return nil, errors.New("Pulumi context is required")
 	}
 	subject, err := validateArgs(name, args)
+	if err != nil {
+		return nil, err
+	}
+	applyArgs := args
+	applyArgs.Ref, applyArgs.Environment = args.ApplyRef, args.ApplyEnvironment
+	applySubject, err := validateArgs(name, applyArgs)
+	if err != nil {
+		return nil, fmt.Errorf("apply execution context: %w", err)
+	}
+	if subject == applySubject {
+		return nil, errors.New("preview and apply must have different exact execution contexts")
+	}
+	applyTrustJSON, err := buildTrustPolicy(args.ProviderARN, args.Audience, applySubject)
 	if err != nil {
 		return nil, err
 	}
@@ -98,7 +115,7 @@ func NewGitHubActionsDeploymentIdentity(
 	apply, err := iam.NewRole(ctx, name+"-apply", &iam.RoleArgs{
 		Name:             pulumi.String(args.RoleNamePrefix + "-apply"),
 		Description:      pulumi.StringPtr("GitHub Actions deployment apply role"),
-		AssumeRolePolicy: pulumi.String(trustJSON),
+		AssumeRolePolicy: pulumi.String(applyTrustJSON),
 		Tags: pulumi.StringMap{
 			"ajent-capability": pulumi.String("infrastructure.deployment-identity"),
 			"ajent-authority":  pulumi.String("apply"),
@@ -126,11 +143,13 @@ func NewGitHubActionsDeploymentIdentity(
 	component.PreviewRoleARN = preview.Arn
 	component.ApplyRoleARN = apply.Arn
 	component.Subject = pulumi.String(subject).ToStringOutput()
+	component.ApplySubject = pulumi.String(applySubject).ToStringOutput()
 	component.TrustPolicyJSON = pulumi.String(trustJSON).ToStringOutput()
 	if err := ctx.RegisterResourceOutputs(component, pulumi.Map{
 		"previewRoleArn":  component.PreviewRoleARN,
 		"applyRoleArn":    component.ApplyRoleARN,
 		"subject":         component.Subject,
+		"applySubject":    component.ApplySubject,
 		"trustPolicyJSON": component.TrustPolicyJSON,
 	}); err != nil {
 		return nil, fmt.Errorf("register deployment identity outputs: %w", err)
@@ -188,7 +207,7 @@ func validateArgs(name string, args Args) (string, error) {
 		return "", fmt.Errorf("apply policy: %w", err)
 	}
 	if previewCanonical == applyCanonical {
-		return "", errors.New("preview and apply policies must define distinct authorities")
+		return "", errors.New("preview and apply policy documents must differ; semantic authority remains caller-owned")
 	}
 	return subject, nil
 }

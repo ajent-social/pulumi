@@ -19,7 +19,7 @@ const (
 func validArgs() Args {
 	return Args{
 		RoleNamePrefix: "ferro-deploy", ProviderARN: testProviderARN, Audience: GitHubOIDCAudience,
-		RepositoryOwner: "example-org", RepositoryName: "example-repo", Ref: "refs/heads/main",
+		RepositoryOwner: "example-org", RepositoryName: "example-repo", Ref: "refs/heads/main", ApplyEnvironment: "production",
 		PreviewPolicyJSON: previewPolicy, ApplyPolicyJSON: applyPolicy,
 	}
 }
@@ -183,6 +183,9 @@ func TestComponentRegistersSeparateScopedPreviewAndApplyRoles(t *testing.T) {
 			roleNames[name] = true
 			trust := item.Inputs["assumeRolePolicy"].StringValue()
 			expected := PolicyExpectation{ProviderARN: testProviderARN, Audience: GitHubOIDCAudience, Subject: "repo:example-org/example-repo:ref:refs/heads/main"}
+			if strings.HasSuffix(name, "-apply") {
+				expected.Subject = "repo:example-org/example-repo:environment:production"
+			}
 			if violations := ValidateResource(Resource{Type: item.TypeToken, Properties: map[string]any{"assumeRolePolicy": trust}}, expected); len(violations) > 0 {
 				t.Fatalf("generated role trust rejected: %v", violations)
 			}
@@ -211,6 +214,48 @@ func TestDecodeDocumentRejectsTrailingData(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := decodeDocument(obj); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReviewedResourceWildcardExceptions(t *testing.T) {
+	for _, tc := range []struct {
+		name, action, condition string
+		valid                   bool
+	}{
+		{"subnet discovery", "ec2:DescribeSubnets", `,"Condition":{"StringEquals":{"aws:RequestedRegion":"us-west-2"}}`, true},
+		{"registry login", "ecr:GetAuthorizationToken", `,"Condition":{"StringEquals":{"aws:RequestedRegion":"us-west-2"}}`, true},
+		{"missing region", "ec2:DescribeSubnets", "", false},
+		{"wildcard region", "ec2:DescribeSubnets", `,"Condition":{"StringEquals":{"aws:RequestedRegion":"*"}}`, false},
+		{"mutating grant", "ec2:DeleteSubnet", `,"Condition":{"StringEquals":{"aws:RequestedRegion":"us-west-2"}}`, false},
+		{"wildcard action", "ec2:Describe*", `,"Condition":{"StringEquals":{"aws:RequestedRegion":"us-west-2"}}`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := `{"Version":"2012-10-17","Statement":{"Effect":"Allow","Action":"` + tc.action + `","Resource":"*"` + tc.condition + `}}`
+			if err := validatePermissionsPolicy(doc); (err == nil) != tc.valid {
+				t.Fatalf("valid=%v error=%v", tc.valid, err)
+			}
+		})
+	}
+}
+
+func TestComponentRejectsSharedExecutionContext(t *testing.T) {
+	args := validArgs()
+	args.ApplyEnvironment, args.ApplyRef = "", args.Ref
+	mocks := &resourceMocks{}
+	err := pulumi.RunErr(func(ctx *pulumi.Context) error {
+		_, err := NewGitHubActionsDeploymentIdentity(ctx, "deployment", args)
+		return err
+	}, pulumi.WithMocks("deployment-identity", "test", mocks))
+	if err == nil || !strings.Contains(err.Error(), "different exact execution contexts") {
+		t.Fatalf("shared context accepted: %v", err)
+	}
+}
+
+func TestDifferentPolicyJSONDoesNotProveDistinctAuthority(t *testing.T) {
+	args := validArgs()
+	args.ApplyPolicyJSON = strings.Replace(previewPolicy, `"Effect":"Allow"`, `"Sid":"DifferentPresentation","Effect":"Allow"`, 1)
+	if _, err := validateArgs("deployment", args); err != nil {
 		t.Fatal(err)
 	}
 }

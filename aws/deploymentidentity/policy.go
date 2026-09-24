@@ -202,6 +202,9 @@ func validatePermissionsDocument(document map[string]any) error {
 			return errors.New("Allow statement must name exact resource ARNs")
 		}
 		for _, resource := range resources {
+			if resource == "*" && reviewedUnscopedStatement(statement, actions) {
+				continue
+			}
 			if !validExactARN(resource) {
 				return errors.New("Allow statement resource must be an exact ARN without wildcards")
 			}
@@ -331,4 +334,33 @@ func inlinePolicyDocuments(value any) ([]map[string]any, error) {
 		policies = append(policies, policy)
 	}
 	return policies, nil
+}
+
+// These demonstrated discovery/authentication operations have no resource-level
+// authorization in AWS's service authorization reference. Keep the exception
+// action-specific and region-constrained; never infer safety from a prefix.
+func reviewedUnscopedStatement(statement map[string]any, actions []string) bool {
+	for _, action := range actions {
+		if action != "ec2:DescribeSubnets" && action != "ecr:GetAuthorizationToken" {
+			return false
+		}
+	}
+	condition, ok := object(statement["Condition"])
+	if !ok {
+		return false
+	}
+	equals, ok := object(condition["StringEquals"])
+	if !ok {
+		return false
+	}
+	regions := stringList(equals["aws:RequestedRegion"])
+	if len(regions) == 0 {
+		return false
+	}
+	for _, region := range regions {
+		if !validExactValue(region) || strings.ContainsAny(region, ":/ ") {
+			return false
+		}
+	}
+	return true
 }

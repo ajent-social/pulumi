@@ -6,16 +6,16 @@ Intent: allow one trusted deployment workload to obtain short-lived cloud author
 
 ## AWS GitHub Actions profile
 
-The first profile constructs two IAM roles from the official Pulumi AWS provider resources: a preview role and an apply role. Both trust only the GitHub Actions OIDC provider ARN supplied by the caller, the exact audience `sts.amazonaws.com`, and one exact repository subject. The caller must supply separate, valid IAM permission documents for both roles. Each `Allow` statement must name exact actions and exact resource ARNs; wildcard actions, wildcard resources, `NotAction`, and `NotResource` are rejected. Canonical-equivalent preview and apply documents are rejected so the two roles do not receive identical authority by accident.
+The first profile constructs two IAM roles from the official Pulumi AWS provider resources: a preview role and an apply role. Both trust only the GitHub Actions OIDC provider ARN supplied by the caller, the exact audience `sts.amazonaws.com`, and distinct exact repository execution subjects. The caller must supply separate, valid IAM permission documents for both roles. Each `Allow` statement must name exact actions and exact resource ARNs. The only resource-wildcard exceptions are `ec2:DescribeSubnets` and `ecr:GetAuthorizationToken`, each constrained by exact `StringEquals` `aws:RequestedRegion` values. Wildcard actions, other wildcard resources, `NotAction`, and `NotResource` are rejected. Canonical-equivalent documents are rejected as a syntactic duplicate guard; IAM-equivalent documents with different presentation can pass. The caller remains responsible for the meaning of each role’s permissions.
 
-A caller selects exactly one subject scope:
+A caller selects exactly one scope for preview (`Ref` or `Environment`) and one different scope for apply (`ApplyRef` or `ApplyEnvironment`):
 
 - exact branch or tag ref, such as `refs/heads/release`; or
 - exact GitHub environment name.
 
 Owner and repository names are explicit. Optional immutable owner/repository IDs must be supplied together and form the immutable GitHub subject variant. No wildcard repository, ref, environment, audience, or provider default is generated. Environment protection rules, deployment branch restrictions, approval, AWS account setup, the existing OIDC provider, the Pulumi provider's own credentials, and organizational policy attachment remain caller-owned. An environment subject does not prove that environment approval is configured.
 
-The component does not create an OIDC provider, permissions boundary, GitHub workflow, or AWS deployment. It does not classify arbitrary IAM actions as read-only; callers own the meaning of their preview and apply permission documents. Its strict resource rule rejects wildcard resources, including wildcard resource suffixes; this may not fit deployments that require dynamically named resources.
+The component does not create an OIDC provider, permissions boundary, GitHub workflow, or AWS deployment. It does not classify arbitrary IAM actions as read-only; callers own the meaning of their preview and apply permission documents. Beyond the two documented, region-constrained exceptions, its strict resource rule rejects wildcard resources, including wildcard resource suffixes; deployments requiring dynamically named resources are unsupported until their permission requirements are reviewed.
 
 A pure Go resource predicate and positive/negative fixtures cover raw IAM role trust and permission resources. Pulumi currently supports custom policy packs in TypeScript, Python, or OPA, not Go. The predicate is not automatically attached to a stack and establishes no organization-wide enforcement. Consumers must connect equivalent checks to their chosen policy engine and attach mandatory policy separately. Managed-policy attachment resources are rejected by the predicate because their effective policy cannot be verified from one resource at a time.
 
