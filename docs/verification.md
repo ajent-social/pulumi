@@ -8,4 +8,4 @@
 | Disposable deployment and denied access | Observed provider behavior in that environment | Universal organization enforcement |
 | Real consumer adoption | Compatibility in that consumer | Stability across all products |
 
-All rows are pending. Production enforcement and drift checks need separately recorded evidence. Keep account and network identifiers out of public fixtures and logs.
+AWS component mocks and pure policy fixtures exist for the deployment identity candidate. Provider preview, disposable AWS trust/denied-access checks, connected mandatory policy enforcement, consumer adoption, and all private-database rows remain pending. Production enforcement and drift checks need separately recorded evidence. Keep account and network identifiers out of public fixtures and logs.
