@@ -56,7 +56,8 @@ func New(ctx *pulumi.Context, name string, args Args, opts ...pulumi.ResourceOpt
 	}
 
 	arnMap := pulumi.StringMap{}
-	for _, spec := range args.Secrets {
+	seenLogical := map[string]struct{}{}
+	for i, spec := range args.Secrets {
 		full := args.Prefix + "/" + spec.Name
 		sArgs := &secretsmanager.SecretArgs{
 			Name:        pulumi.String(full),
@@ -72,7 +73,12 @@ func New(ctx *pulumi.Context, name string, args Args, opts ...pulumi.ResourceOpt
 		} else {
 			sArgs.RecoveryWindowInDays = pulumi.Int(recovery)
 		}
-		sec, err := secretsmanager.NewSecret(ctx, name+"-"+sanitize(spec.Name), sArgs, pulumi.Parent(component))
+		logical := fmt.Sprintf("%s-%d-%s", name, i, sanitize(spec.Name))
+		if _, ok := seenLogical[logical]; ok {
+			return nil, fmt.Errorf("secret logical name collision %q", logical)
+		}
+		seenLogical[logical] = struct{}{}
+		sec, err := secretsmanager.NewSecret(ctx, logical, sArgs, pulumi.Parent(component))
 		if err != nil {
 			return nil, fmt.Errorf("secret %q: %w", full, err)
 		}

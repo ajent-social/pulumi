@@ -36,4 +36,14 @@ func TestValidateTLSPolicy(t *testing.T) {
 	if err := httpsedge.ValidateTLSPolicy("ELBSecurityPolicy-TLS-1-0-2015-04"); err == nil {
 		t.Fatal("expected reject weak policy")
 	}
+	err := httpsedge.ValidateArgs(httpsedge.Args{
+		Name: "app-edge", VPCID: "vpc-abc123",
+		SubnetIDs: []string{"subnet-a", "subnet-b"},
+		SecurityGroupIDs: []string{"sg-abc123"},
+		CertificateARN: "arn:aws:acm:us-west-2:123456789012:certificate/uuid",
+		TargetPort: 8080, SSLPolicy: "ELBSecurityPolicy-2016-08",
+	})
+	if err == nil {
+		t.Fatal("expected ValidateArgs to reject weak SSLPolicy")
+	}
 }

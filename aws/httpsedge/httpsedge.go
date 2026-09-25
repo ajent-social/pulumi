@@ -14,7 +14,7 @@ import (
 const defaultSSLPolicy = "ELBSecurityPolicy-TLS13-1-2-2021-06"
 
 var (
-	nameRE   = regexp.MustCompile(`^[a-z][a-z0-9-]{0,30}[a-z0-9]$`)
+	nameRE   = regexp.MustCompile(`^[a-z][a-z0-9-]{0,27}[a-z0-9]$`)
 	vpcRE    = regexp.MustCompile(`^vpc-[0-9a-f]+$`)
 	subnetRE = regexp.MustCompile(`^subnet-[0-9a-f]+$`)
 	sgRE     = regexp.MustCompile(`^sg-[0-9a-f]+$`)
@@ -200,6 +200,13 @@ func validateArgs(a Args) error {
 	}
 	if a.SSLPolicy != "" && !strings.HasPrefix(a.SSLPolicy, "ELBSecurityPolicy-") {
 		return errors.New("SSLPolicy must be an ELBSecurityPolicy-* name")
+	}
+	if err := ValidateTLSPolicy(a.SSLPolicy); err != nil {
+		return err
+	}
+	// AWS target group names max 32 chars; we append "-tg".
+	if len(a.Name)+len("-tg") > 32 {
+		return errors.New("Name too long for target group (max 29 characters)")
 	}
 	return nil
 }
