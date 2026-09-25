@@ -11,7 +11,8 @@ populate versions out of band (CLI, CI, or KMS-sealed pipelines).
 
 ## Non-goals
 
-SSM Parameter Store, automatic rotation Lambdas, or generating passwords.
+SSM Parameter Store (see `infrastructure.param-store` / `aws/paramstore`),
+automatic rotation Lambdas, or generating passwords.
 
 ## Security limits
 

@@ -11,8 +11,9 @@ subnets are caller-supplied.
 
 ## Non-goals
 
-NLB/gRPC, WAF, CloudFront, path-based multi-service routing beyond one target
-group, or issuing certificates (see `infrastructure.tenant-dns-tls`).
+NLB/gRPC (see `infrastructure.nlb-edge`), WAF, CloudFront, path-based
+multi-service routing beyond one target group, or issuing certificates (see
+`infrastructure.tenant-dns-tls`).
 
 ## Security limits
 
