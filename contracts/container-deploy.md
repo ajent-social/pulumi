@@ -7,9 +7,11 @@ Status: CANDIDATE AWS ECS Fargate implementation. Package:
 
 Run one service from an **immutable image digest** (`repo@sha256:…`) on
 Fargate in private subnets, with a required container port and CPU/memory.
-Mutable tags (`:latest`) are rejected.
+Mutable tags (`:latest`) are rejected. Optional `TargetGroupARN` registers
+the service with an ALB/NLB target group (e.g. from `httpsedge`).
 
 ## Non-goals
 
 Building/scanning images (see delivery.container-artifact), multi-tenant
 schedulers, or choosing public IP by default (assignPublicIp must be explicit).
+Cluster and IAM roles are supplied by the caller (see `ecscluster`).
