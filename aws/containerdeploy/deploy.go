@@ -15,6 +15,7 @@ import (
 var (
 	digestRE = regexp.MustCompile(`^([0-9]{12})\.dkr\.ecr\.([a-z0-9-]+)\.amazonaws\.com/[a-z0-9._/-]+@sha256:[a-f0-9]{64}$`)
 	nameRE   = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+	tgARNRE  = regexp.MustCompile(`^arn:aws:elasticloadbalancing:[a-z0-9-]+:[0-9]{12}:targetgroup/.+`)
 )
 
 // Args configures one Fargate service.
@@ -32,6 +33,9 @@ type Args struct {
 	AssignPublicIP   bool // default false; must be explicit true to enable
 	DesiredCount     int
 	Region           string // AWS region for awslogs and ECR; required
+	// TargetGroupARN, when set, registers the container with an ALB/NLB
+	// target group (typically from httpsedge). Container name matches Name.
+	TargetGroupARN string
 }
 
 // Service is a Fargate deployment component.
@@ -106,7 +110,7 @@ func New(ctx *pulumi.Context, name string, args Args, opts ...pulumi.ResourceOpt
 		return nil, fmt.Errorf("task definition: %w", err)
 	}
 
-	svc, err := ecs.NewService(ctx, name+"-svc", &ecs.ServiceArgs{
+	svcArgs := &ecs.ServiceArgs{
 		Name:           pulumi.String(args.Name),
 		Cluster:        pulumi.String(args.ClusterARN),
 		TaskDefinition: td.Arn,
@@ -120,7 +124,18 @@ func New(ctx *pulumi.Context, name string, args Args, opts ...pulumi.ResourceOpt
 		Tags: pulumi.StringMap{
 			"ajent-capability": pulumi.String("delivery.container-deploy"),
 		},
-	}, pulumi.Parent(component))
+	}
+	if args.TargetGroupARN != "" {
+		svcArgs.LoadBalancers = ecs.ServiceLoadBalancerArray{
+			&ecs.ServiceLoadBalancerArgs{
+				TargetGroupArn: pulumi.String(args.TargetGroupARN),
+				ContainerName:  pulumi.String(args.Name),
+				ContainerPort:  pulumi.Int(args.ContainerPort),
+			},
+		}
+		svcArgs.HealthCheckGracePeriodSeconds = pulumi.Int(60)
+	}
+	svc, err := ecs.NewService(ctx, name+"-svc", svcArgs, pulumi.Parent(component))
 	if err != nil {
 		return nil, fmt.Errorf("ecs service: %w", err)
 	}
@@ -167,6 +182,9 @@ func validateArgs(a Args) error {
 	}
 	if m[2] != a.Region {
 		return fmt.Errorf("Image ECR region %q must match Region %q", m[2], a.Region)
+	}
+	if a.TargetGroupARN != "" && !tgARNRE.MatchString(a.TargetGroupARN) {
+		return errors.New("TargetGroupARN must be an elbv2 target group ARN")
 	}
 	return nil
 }
