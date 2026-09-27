@@ -52,6 +52,7 @@ type Record struct {
 	Apply     *StepResult     `json:"apply,omitempty"`
 	Verify    []CheckResult   `json:"verify,omitempty"`
 	Rollback  *RollbackResult `json:"rollback,omitempty"`
+	PinPR     *PinPRResult    `json:"pin_pr,omitempty"`
 }
 
 // GateResult is the gate command outcome.
@@ -87,6 +88,16 @@ type CheckResult struct {
 	Passed bool      `json:"passed"`
 	Detail string    `json:"detail,omitempty"`
 	At     time.Time `json:"at"`
+}
+
+// PinPRResult is the pin pull request outcome after a verified deploy.
+type PinPRResult struct {
+	Branch     string    `json:"branch,omitempty"`
+	URL        string    `json:"url,omitempty"`
+	Error      string    `json:"error,omitempty"`
+	FinishedAt time.Time `json:"finished_at"`
+
+	err error
 }
 
 // RollbackResult is the restore-and-reapply outcome.

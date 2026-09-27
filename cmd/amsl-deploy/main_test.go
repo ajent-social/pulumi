@@ -24,6 +24,10 @@ func TestExitCode(t *testing.T) {
 		{localdeploy.OutcomeRolledBack, errors.New("verify"), exitRolledBack},
 		{localdeploy.OutcomeRollbackFailed, errors.New("ROLLBACK FAILED"), exitRollbackFailed},
 	}
+	unpublished := &localdeploy.Record{Outcome: localdeploy.OutcomeSucceeded, PinPR: &localdeploy.PinPRResult{Error: "gh failed"}}
+	if got := exitCode(unpublished, errors.New("publishing the pins failed")); got != exitPinsUnpublished {
+		t.Errorf("exitCode(pins unpublished) = %d, want %d", got, exitPinsUnpublished)
+	}
 	for _, tt := range tests {
 		if got := exitCode(&localdeploy.Record{Outcome: tt.outcome}, tt.err); got != tt.want {
 			t.Errorf("exitCode(%s, %v) = %d, want %d", tt.outcome, tt.err, got, tt.want)

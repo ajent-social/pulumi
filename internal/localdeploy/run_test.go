@@ -459,3 +459,78 @@ func TestBuildxArgs(t *testing.T) {
 		t.Fatalf("buildxArgs =\n%s\nwant\n%s", got, want)
 	}
 }
+
+type fakePins struct {
+	checkErr, publishErr error
+	checks, publishes    int
+	change               PinChange
+}
+
+func (p *fakePins) Check(context.Context) error { p.checks++; return p.checkErr }
+func (p *fakePins) Publish(_ context.Context, c PinChange) (string, string, error) {
+	p.publishes++
+	p.change = c
+	if p.publishErr != nil {
+		return "amsl-deploy/x", "", p.publishErr
+	}
+	return "amsl-deploy/x", "https://example.com/pr/1", nil
+}
+
+func TestPinsPublishedAfterVerify(t *testing.T) {
+	h := newHarness(t)
+	pins := &fakePins{}
+	h.d.Pins = pins
+	rec, path, err := h.d.Run(context.Background(), Options{Yes: true})
+	if err != nil || rec.Outcome != OutcomeSucceeded {
+		t.Fatalf("Run = %v, outcome %s", err, rec.Outcome)
+	}
+	if pins.checks != 1 || pins.publishes != 1 || pins.change.SourceSHA != testSHA || pins.change.Images[0].Ref != newRef {
+		t.Fatalf("pins = %+v", pins)
+	}
+	if r := readRecord(t, path); r.PinPR == nil || r.PinPR.URL != "https://example.com/pr/1" || r.PinPR.Error != "" {
+		t.Fatalf("record pin_pr = %+v", r.PinPR)
+	}
+}
+
+func TestPinsCheckRefusesBeforeBuild(t *testing.T) {
+	h := newHarness(t)
+	h.d.Pins = &fakePins{checkErr: errors.New("pin_pr: HEAD is not on origin/main")}
+	rec, _, err := h.d.Run(context.Background(), Options{Yes: true})
+	assertRefusedUnchanged(t, h, rec, err, "not on origin/main")
+	if len(h.builder.reqs) != 0 || h.cmd.argv != nil {
+		t.Fatal("built or gated after a pin_pr preflight refusal")
+	}
+}
+
+func TestPinsPublishFailureKeepsDeploy(t *testing.T) {
+	h := newHarness(t)
+	h.d.Pins = &fakePins{publishErr: errors.New("gh: not logged in")}
+	rec, path, err := h.d.Run(context.Background(), Options{Yes: true})
+	if rec.Outcome != OutcomeSucceeded || err == nil || !strings.Contains(err.Error(), "publishing the pins failed") {
+		t.Fatalf("outcome = %s, err = %v", rec.Outcome, err)
+	}
+	if h.stack.ups != 1 || h.stack.cfg[pinKey].Value != newRef {
+		t.Fatal("a pin publishing failure must not roll back a verified deploy")
+	}
+	if r := readRecord(t, path); r.PinPR == nil || !strings.Contains(r.PinPR.Error, "not logged in") {
+		t.Fatalf("record pin_pr = %+v", r.PinPR)
+	}
+}
+
+func TestPinsNotPublishedOnRollbackOrPlan(t *testing.T) {
+	h := newHarness(t)
+	pins := &fakePins{}
+	h.d.Pins = pins
+	h.version.Store("wrong")
+	if rec, _, _ := h.d.Run(context.Background(), Options{Yes: true}); rec.Outcome != OutcomeRolledBack || rec.PinPR != nil {
+		t.Fatalf("outcome = %s, pin_pr = %+v", rec.Outcome, rec.PinPR)
+	}
+	h2 := newHarness(t)
+	h2.d.Pins = pins
+	if rec, _, _ := h2.d.Run(context.Background(), Options{Plan: true}); rec.Outcome != OutcomePlanned {
+		t.Fatalf("plan outcome = %s", rec.Outcome)
+	}
+	if pins.publishes != 0 || pins.checks != 2 {
+		t.Fatalf("checks = %d publishes = %d, want 2 and 0", pins.checks, pins.publishes)
+	}
+}

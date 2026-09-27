@@ -43,7 +43,8 @@ type Deployer struct {
 	Stack     Stack
 	Services  Services
 	HTTP      *http.Client
-	Confirmer Confirmer // nil means no interactive operator is present
+	Confirmer Confirmer    // nil means no interactive operator is present
+	Pins      PinPublisher // nil disables publishing the pin change
 	Now       func() time.Time
 	Out       io.Writer // operator-facing progress
 	Poll      time.Duration
@@ -125,6 +126,11 @@ func (d *Deployer) run(ctx context.Context, opts Options) error {
 	if err != nil {
 		return refusal{fmt.Errorf("preflight: read stack config: %w", err)}
 	}
+	if d.Pins != nil {
+		if err := d.Pins.Check(ctx); err != nil {
+			return refusal{err}
+		}
+	}
 	d.printf("preflight: source %s, account %s, stack %s\n", sha, acct, cfg.Pulumi.Stack)
 
 	if opts.Plan {
@@ -199,6 +205,28 @@ func (d *Deployer) run(ctx context.Context, opts Options) error {
 	}
 	r.Outcome = OutcomeSucceeded
 	d.printf("deployed %s to stack %s and verified\n", sha, cfg.Pulumi.Stack)
+	return d.publishPins(ctx, sha)
+}
+
+// publishPins opens the pin pull request. A failure here does not undo the
+// verified deploy; it is recorded and returned so the operator publishes the
+// change by hand.
+func (d *Deployer) publishPins(ctx context.Context, sha string) error {
+	if d.Pins == nil {
+		return nil
+	}
+	res := &PinPRResult{}
+	d.rec.PinPR = res
+	res.Branch, res.URL, res.err = d.Pins.Publish(context.WithoutCancel(ctx), PinChange{
+		RunID: d.rec.RunID, SourceSHA: sha, Stack: d.Config.Pulumi.Stack, Images: d.rec.Images,
+	})
+	res.FinishedAt = d.now()
+	if res.err != nil {
+		res.Error = res.err.Error()
+		d.printf("PINS NOT PUBLISHED: the stack runs the new pins but the repository does not record them: %v\n", res.err)
+		return fmt.Errorf("deployed and verified, but publishing the pins failed: %w", res.err)
+	}
+	d.printf("pins: pull request %s (branch %s)\n", res.URL, res.Branch)
 	return nil
 }
 

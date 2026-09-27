@@ -10,9 +10,15 @@ behavior, config rules, exit codes and limits.
 ## Requirements
 
 - Go 1.25 or later to install.
-- `git`, `docker` with the buildx plugin, and the `pulumi` CLI on `PATH`.
-  Multi-platform builds need a buildx builder that supports every declared
-  platform; name it with `-builder`.
+- `git` and the `pulumi` CLI on `PATH`.
+- For builder `buildx` (default): `docker` with the buildx plugin. Multi-platform
+  builds need a buildx builder that supports every declared platform; name it
+  with `-builder`.
+- For builder `buildkit`: `buildctl` and a reachable BuildKit daemon. See
+  [remote build and gate](../../docs/local-deploy-remote.md).
+- For the pin pull request (on by default): `gh`, authenticated for the
+  Pulumi project's repository, whose `origin/HEAD` must be set
+  (`git remote set-head origin --auto`).
 - AWS credentials the SDK default chain can find, for the configured account.
 - A Pulumi project and existing stack that read the pinned image references
   from stack config.
@@ -33,6 +39,10 @@ amsl-deploy -config amsl-deploy.json deploy
 
 Flags: `-yes` (skip the confirmation), `-allow-dirty`, `-expect-sha <sha>`,
 `-builder <name>`.
+
+Exit codes: 0 succeeded or planned, 1 refused (nothing applied), 2 rolled
+back, 3 rollback failed, 4 deployed but the pin pull request failed, 64 usage
+or invalid config.
 
 ## Example config
 
@@ -65,6 +75,9 @@ All values are placeholders.
     "work_dir": "infra",
     "stack": "staging"
   },
+  "pin_pr": {
+    "branch_prefix": "amsl-deploy/"
+  },
   "verify": {
     "timeout": "15m",
     "ecs_services": [
@@ -81,5 +94,10 @@ All values are placeholders.
   }
 }
 ```
+
+After a verified deploy the command opens a pull request that commits the
+stack settings file with the new pins. Merge it before the next deploy; until
+then the preflight refuses because the settings file differs from `HEAD`. Set
+`"pin_pr": {"enabled": false}` to skip it.
 
 Add the record directory (default `.amsl-deploy/`) to `.gitignore`.

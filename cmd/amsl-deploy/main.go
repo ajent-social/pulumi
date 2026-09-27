@@ -23,11 +23,12 @@ import (
 // Exit codes. Distinct codes let a wrapper script tell "nothing changed" from
 // "the stack needs a human".
 const (
-	exitOK             = 0
-	exitRefused        = 1 // nothing was applied
-	exitRolledBack     = 2 // apply or verify failed, previous pins re-applied
-	exitRollbackFailed = 3 // the stack state is unknown
-	exitUsage          = 64
+	exitOK              = 0
+	exitRefused         = 1 // nothing was applied
+	exitRolledBack      = 2 // apply or verify failed, previous pins re-applied
+	exitRollbackFailed  = 3 // the stack state is unknown
+	exitPinsUnpublished = 4 // deployed and verified; the pin pull request failed
+	exitUsage           = 64
 )
 
 func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
@@ -43,7 +44,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	yes := fs.Bool("yes", false, "apply without the interactive confirmation")
 	allowDirty := fs.Bool("allow-dirty", false, "deploy from a working tree with uncommitted changes")
 	expectSHA := fs.String("expect-sha", "", "refuse unless HEAD is exactly this commit")
-	builder := fs.String("builder", "", "docker buildx builder instance (default: current)")
+	builder := fs.String("builder", "", "docker buildx builder instance (default: current); buildx builder kind only")
 	if err := fs.Parse(args); err != nil {
 		return exitUsage
 	}
@@ -86,11 +87,17 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		Git:       localdeploy.GitCLI{},
 		Commander: localdeploy.ExecCommander{},
 		Cloud:     cloud,
-		Builder:   localdeploy.DockerBuildx{Commander: localdeploy.ExecCommander{}, Builder: *builder},
+		Builder:   newBuilder(cfg.Builder, *builder),
 		Stack:     stack,
 		Services:  cloud,
 		HTTP:      &http.Client{Timeout: 30 * time.Second},
 		Out:       stderr,
+	}
+	if cfg.PinPR.On() {
+		d.Pins = &localdeploy.GitPinPR{
+			Dir: cfg.PulumiDir(), Stack: cfg.Pulumi.Stack,
+			Remote: cfg.PinPR.Remote, BranchPrefix: cfg.PinPR.BranchPrefix,
+		}
 	}
 	if isTerminal(stdin) {
 		d.Confirmer = promptConfirmer{in: bufio.NewReader(stdin), out: stderr}
@@ -107,9 +114,19 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return exitCode(rec, err)
 }
 
+func newBuilder(c localdeploy.BuilderConfig, buildxBuilder string) localdeploy.Builder {
+	if c.Kind == localdeploy.BuilderBuildkit {
+		return &localdeploy.Buildctl{Commander: localdeploy.ExecCommander{}, Addr: c.Addr, TLS: c.TLS}
+	}
+	return localdeploy.DockerBuildx{Commander: localdeploy.ExecCommander{}, Builder: buildxBuilder}
+}
+
 func exitCode(rec *localdeploy.Record, err error) int {
 	switch rec.Outcome {
 	case localdeploy.OutcomeSucceeded, localdeploy.OutcomePlanned:
+		if rec.PinPR != nil && rec.PinPR.Error != "" {
+			return exitPinsUnpublished
+		}
 		if err != nil { // the run passed but its record could not be written
 			return exitRefused
 		}

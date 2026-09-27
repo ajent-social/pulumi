@@ -2,8 +2,6 @@ package localdeploy
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -69,20 +67,7 @@ func (b DockerBuildx) BuildPush(ctx context.Context, req BuildRequest, out io.Wr
 	if err := b.Commander.Run(ctx, "", buildxArgs(req, b.Builder, meta), nil, out); err != nil {
 		return "", err
 	}
-	raw, err := os.ReadFile(meta)
-	if err != nil {
-		return "", fmt.Errorf("read buildx metadata: %w", err)
-	}
-	var m struct {
-		Digest string `json:"containerimage.digest"`
-	}
-	if err := json.Unmarshal(raw, &m); err != nil {
-		return "", fmt.Errorf("parse buildx metadata: %w", err)
-	}
-	if m.Digest == "" {
-		return "", errors.New("buildx metadata has no containerimage.digest")
-	}
-	return m.Digest, nil
+	return readMetadataDigest(meta)
 }
 
 func buildxArgs(req BuildRequest, builder, metadataFile string) []string {

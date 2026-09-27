@@ -140,3 +140,54 @@ func TestLoadResolvesPathsFromConfigDir(t *testing.T) {
 		t.Fatalf("recordDir = %q, want %q", got, want)
 	}
 }
+
+func TestBuilderAndPinPRConfig(t *testing.T) {
+	tests := []struct {
+		name    string
+		builder map[string]any
+		pinPR   map[string]any
+		want    string // empty means valid
+	}{
+		{"default buildx", nil, nil, ""},
+		{"buildkit over tls", map[string]any{"kind": "buildkit", "addr": "tcp://builder.example:1234",
+			"tls": map[string]any{"ca_cert": "/etc/b/ca.pem", "cert": "/etc/b/cert.pem", "key": "/etc/b/key.pem"}}, nil, ""},
+		{"buildkit unix socket", map[string]any{"kind": "buildkit", "addr": "unix:///run/buildkit/buildkitd.sock"}, nil, ""},
+		{"buildkit tcp without tls", map[string]any{"kind": "buildkit", "addr": "tcp://builder.example:1234"}, nil, "builder.tls"},
+		{"buildkit tcp partial tls", map[string]any{"kind": "buildkit", "addr": "tcp://builder.example:1234",
+			"tls": map[string]any{"ca_cert": "/ca.pem", "cert": "", "key": "/key.pem"}}, nil, "builder.tls"},
+		{"buildkit bad scheme", map[string]any{"kind": "buildkit", "addr": "http://builder.example"}, nil, "scheme"},
+		{"buildkit no addr", map[string]any{"kind": "buildkit"}, nil, "builder.addr"},
+		{"addr on buildx", map[string]any{"kind": "buildx", "addr": "tcp://x:1"}, nil, "apply only"},
+		{"unknown kind", map[string]any{"kind": "kaniko"}, nil, "builder.kind"},
+		{"unknown builder field", map[string]any{"kind": "buildx", "insecure": true}, nil, "unknown field"},
+		{"pin pr disabled", nil, map[string]any{"enabled": false}, ""},
+		{"pin pr prefix", nil, map[string]any{"branch_prefix": "deploys/", "remote": "upstream"}, ""},
+		{"bad prefix", nil, map[string]any{"branch_prefix": "-x"}, "branch_prefix"},
+		{"bad remote", nil, map[string]any{"remote": "a b"}, "pin_pr.remote"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			c := validConfig()
+			if tt.builder != nil {
+				c["builder"] = tt.builder
+			}
+			if tt.pinPR != nil {
+				c["pin_pr"] = tt.pinPR
+			}
+			_, err := Parse(mustJSON(t, c))
+			if tt.want == "" && err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			if tt.want != "" && (err == nil || !strings.Contains(err.Error(), tt.want)) {
+				t.Fatalf("Parse error = %v, want containing %q", err, tt.want)
+			}
+		})
+	}
+}
+
+func TestPinPROnByDefault(t *testing.T) {
+	off := false
+	if !(PinPRConfig{}).On() || (PinPRConfig{Enabled: &off}).On() {
+		t.Fatal("pin_pr must default on and honor enabled=false")
+	}
+}

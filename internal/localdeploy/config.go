@@ -20,26 +20,30 @@ import (
 const ConfigVersion = 1
 
 var (
-	regionRE      = regexp.MustCompile(`^[a-z]{2}(-[a-z]+)+-[0-9]$`)
-	accountRE     = regexp.MustCompile(`^[0-9]{12}$`)
-	roleARNRE     = regexp.MustCompile(`^arn:aws[a-z-]*:iam::[0-9]{12}:role/[\w+=,.@/-]+$`)
-	repoRE        = regexp.MustCompile(`^([0-9]{12})\.dkr\.ecr\.([a-z0-9-]+)\.amazonaws\.com/([a-z0-9]+(?:[._/-][a-z0-9]+)*)$`)
-	imageNameRE   = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
-	platformRE    = regexp.MustCompile(`^[a-z0-9]+/[a-z0-9]+(/[a-z0-9]+)?$`)
-	configKeyRE   = regexp.MustCompile(`^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$`)
-	buildArgKeyRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	regionRE       = regexp.MustCompile(`^[a-z]{2}(-[a-z]+)+-[0-9]$`)
+	accountRE      = regexp.MustCompile(`^[0-9]{12}$`)
+	roleARNRE      = regexp.MustCompile(`^arn:aws[a-z-]*:iam::[0-9]{12}:role/[\w+=,.@/-]+$`)
+	repoRE         = regexp.MustCompile(`^([0-9]{12})\.dkr\.ecr\.([a-z0-9-]+)\.amazonaws\.com/([a-z0-9]+(?:[._/-][a-z0-9]+)*)$`)
+	imageNameRE    = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$`)
+	platformRE     = regexp.MustCompile(`^[a-z0-9]+/[a-z0-9]+(/[a-z0-9]+)?$`)
+	configKeyRE    = regexp.MustCompile(`^[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+$`)
+	buildArgKeyRE  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+	branchPrefixRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
+	remoteRE       = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
 )
 
 // Config is the consumer-owned deploy description. Paths are relative to the
 // directory holding the config file.
 type Config struct {
-	Version   int          `json:"version"`
-	AWS       AWSConfig    `json:"aws"`
-	Gate      GateConfig   `json:"gate"`
-	Images    []Image      `json:"images"`
-	Pulumi    PulumiConfig `json:"pulumi"`
-	Verify    VerifyConfig `json:"verify"`
-	RecordDir string       `json:"record_dir,omitempty"`
+	Version   int           `json:"version"`
+	AWS       AWSConfig     `json:"aws"`
+	Gate      GateConfig    `json:"gate"`
+	Images    []Image       `json:"images"`
+	Pulumi    PulumiConfig  `json:"pulumi"`
+	Verify    VerifyConfig  `json:"verify"`
+	Builder   BuilderConfig `json:"builder,omitempty"`
+	PinPR     PinPRConfig   `json:"pin_pr,omitempty"`
+	RecordDir string        `json:"record_dir,omitempty"`
 
 	// BaseDir is the directory of the config file; set by Load.
 	BaseDir string `json:"-"`
@@ -73,6 +77,43 @@ type Image struct {
 	Repository string            `json:"repository"`
 	ConfigKey  string            `json:"config_key"`
 }
+
+// Builder kinds.
+const (
+	BuilderBuildx   = "buildx"   // local docker buildx (the default)
+	BuilderBuildkit = "buildkit" // a remote BuildKit daemon driven by buildctl
+)
+
+// BuilderConfig selects where images are built. A remote BuildKit daemon
+// receives the build context and registry credentials over the BuildKit
+// session from this machine; neither is written on the build host.
+type BuilderConfig struct {
+	Kind string `json:"kind,omitempty"`
+	// Addr is the BuildKit daemon address, e.g. tcp://builder.example:1234.
+	Addr string    `json:"addr,omitempty"`
+	TLS  *TLSFiles `json:"tls,omitempty"`
+}
+
+// TLSFiles are the operator's mutual-TLS files for a remote BuildKit daemon.
+// They are machine-local, so absolute paths are allowed.
+type TLSFiles struct {
+	CACert     string `json:"ca_cert"`
+	Cert       string `json:"cert"`
+	Key        string `json:"key"`
+	ServerName string `json:"server_name,omitempty"`
+}
+
+// PinPRConfig controls publishing the pin change after a verified deploy:
+// a commit on a new branch of the Pulumi project's repository and a pull
+// request against its default branch. Enabled unless Enabled is false.
+type PinPRConfig struct {
+	Enabled      *bool  `json:"enabled,omitempty"`
+	BranchPrefix string `json:"branch_prefix,omitempty"`
+	Remote       string `json:"remote,omitempty"`
+}
+
+// On reports whether the pin pull request is enabled.
+func (p PinPRConfig) On() bool { return p.Enabled == nil || *p.Enabled }
 
 // PulumiConfig selects the consumer's Pulumi project directory and stack.
 type PulumiConfig struct {
@@ -272,6 +313,37 @@ func (c *Config) Validate() error {
 		}
 	}
 	checkRelPath(&errs, "record_dir", c.RecordDir, true)
+
+	switch c.Builder.Kind {
+	case "", BuilderBuildx:
+		if c.Builder.Addr != "" || c.Builder.TLS != nil {
+			bad("builder.addr and builder.tls apply only to kind %q", BuilderBuildkit)
+		}
+	case BuilderBuildkit:
+		u, err := url.Parse(c.Builder.Addr)
+		switch {
+		case err != nil || u.Host == "" && u.Path == "":
+			bad("builder.addr must be a BuildKit address such as tcp://host:1234")
+		case u.Scheme == "tcp":
+			// The daemon runs build steps with host privileges; plaintext TCP
+			// would let anyone who can reach the port run them.
+			t := c.Builder.TLS
+			if t == nil || t.CACert == "" || t.Cert == "" || t.Key == "" {
+				bad("builder.tls with ca_cert, cert and key is required for a tcp:// builder")
+			}
+		case u.Scheme == "unix":
+		default:
+			bad("builder.addr scheme must be tcp or unix")
+		}
+	default:
+		bad("builder.kind must be %q or %q", BuilderBuildx, BuilderBuildkit)
+	}
+	if p := c.PinPR.BranchPrefix; p != "" && !branchPrefixRE.MatchString(p) {
+		bad("pin_pr.branch_prefix %q is not a safe branch prefix", p)
+	}
+	if r := c.PinPR.Remote; r != "" && !remoteRE.MatchString(r) {
+		bad("pin_pr.remote %q is not a git remote name", r)
+	}
 	return errors.Join(errs...)
 }
 
