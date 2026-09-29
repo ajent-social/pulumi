@@ -30,11 +30,7 @@ Typical wiring without a product-specific “god” stack:
 3. `ecrrepo` → push digest-pinned images
 4. `appsecrets` and/or `paramstore` shells → populate out of band
 5. `privatedatabase` on private subnets + data SG
-<<<<<<< HEAD
-6. `tenantdnstls` for `*.base` ACM → `httpsedge` (HTTP) or `nlbedge` (TCP/gRPC TLS) with cert + public subnets + edge SG
-=======
-6. `tenantdnstls` (Route53) **or** ACM + `cloudflare/dnsalias` (DNS-only) → `httpsedge` / NLB with cert + public subnets + edge SG
->>>>>>> 3f5a2ba (Add cloudflare/dnsalias for DNS-only service and ACM records.)
+6. `tenantdnstls` (Route53) **or** ACM + `cloudflare/dnsalias` (DNS-only) → `httpsedge` / `nlbedge` with cert + public subnets + edge SG
 7. `ecscluster` → `containerdeploy` on private subnets + app SG with optional `TargetGroupARN`
 
 Components encode construction defaults. An attached resource-level policy can catch unsafe raw resources and overrides. Mocks, policy tests and live disposable verification establish different facts; none should be described as another. No production deployment is part of bootstrap.
