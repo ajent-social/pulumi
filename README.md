@@ -20,6 +20,7 @@ Pulumi implementations and enforcement tests when their contracts are proven.
 | [aws/containerdeploy](aws/containerdeploy) | [container deploy](contracts/container-deploy.md) |
 | [aws/tenantdnstls](aws/tenantdnstls) | [tenant DNS + TLS](contracts/tenant-dns-tls.md) |
 | [cloudflare/dnsalias](cloudflare/dnsalias) | [Cloudflare DNS-only alias](contracts/cloudflare-dns-alias.md) |
+| [cmd/amsl-deploy](cmd/amsl-deploy) | [local deploy](contracts/local-deploy.md) (DISCOVERED) |
 
 ## Compose order (standards AWS app)
 
